@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Lincoln 2-for-1 Cocktails 🍹</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0e0d0f; --surface: #1a1820; --surface2: #231f2e;
+      --gold: #d4a843; --gold-light: #f0c96a; --pink: #e05c7a;
+      --text: #f0ece4; --muted: #8a8396; --border: rgba(212,168,67,0.18);
+      --green: #5dd68e; --red: #d47a7a;
+    }
+    html, body { height: 100%; overflow: hidden; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); }
+
+    /* HEADER */
+    #header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      background: linear-gradient(180deg, rgba(14,13,15,0.98) 85%, transparent);
+      padding: 12px 14px 8px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    #header h1 { font-family:'Playfair Display',serif; font-size:1.1rem; color:var(--gold-light); white-space:nowrap; }
+    #header h1 span { font-style:italic; color:var(--pink); }
+    #btn-row { display:flex; gap:8px; }
+    .hbtn {
+      border:none; border-radius:18px; padding:7px 12px; font-size:0.75rem;
+      font-weight:600; cursor:pointer; font-family:'DM Sans',sans-serif; transition:opacity 0.2s;
+    }
+    #search-btn { background:var(--gold); color:#0e0d0f; }
+    #locate-btn { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+    .hbtn:disabled { opacity:0.5; cursor:default; }
+
+    /* MAP */
+    #map { position:fixed; top:52px; left:0; right:0; height:42vh; z-index:1; }
+
+    /* STATUS BAR */
+    #status-bar {
+      position:fixed; top:calc(52px + 42vh); left:0; right:0; z-index:200;
+      background:var(--surface); border-bottom:1px solid var(--border);
+      padding:8px 14px; display:flex; align-items:center; justify-content:space-between;
+      min-height:36px;
+    }
+    #status-text { font-size:0.72rem; color:var(--muted); }
+    #status-text.searching { color:var(--gold); }
+    #status-text.error { color:var(--red); }
+    #status-text.done { color:var(--green); }
+    #count-badge { font-size:0.7rem; font-weight:600; color:var(--gold); background:rgba(212,168,67,0.12); border:1px solid var(--border); border-radius:10px; padding:2px 9px; display:none; }
+
+    /* LOADING SHIMMER */
+    #loading { display:none; padding:20px 14px; }
+    .shimmer { background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%); background-size:200% 100%; animation:shimmer 1.4s infinite; border-radius:12px; margin-bottom:10px; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+    /* PANEL */
+    #panel { position:fixed; top:calc(52px + 42vh + 36px); left:0; right:0; bottom:0; overflow-y:auto; padding:12px 12px 28px; z-index:100; }
+
+    /* EMPTY STATE */
+    #empty { text-align:center; padding:40px 20px; }
+    #empty .big { font-size:2.5rem; margin-bottom:12px; }
+    #empty p { color:var(--muted); font-size:0.82rem; line-height:1.6; }
+    #empty strong { color:var(--gold); }
+
+    /* CARDS */
+    .card {
+      background:var(--surface); border:1px solid var(--border); border-radius:14px;
+      padding:13px 14px; margin-bottom:9px; cursor:pointer;
+      transition:border-color 0.2s, background 0.2s; position:relative; overflow:hidden;
+    }
+    .card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--gold); border-radius:3px 0 0 3px; opacity:0; transition:opacity 0.2s; }
+    .card.active { border-color:var(--gold); background:var(--surface2); }
+    .card.active::before { opacity:1; }
+    .card-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px; }
+    .card-name { font-size:0.95rem; font-weight:600; color:var(--text); }
+    .badges { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; flex-shrink:0; margin-left:8px; }
+    .badge { border-radius:8px; padding:2px 7px; font-size:0.65rem; font-weight:600; }
+    .b-deal { background:rgba(212,168,67,0.14); color:var(--gold); border:1px solid rgba(212,168,67,0.28); }
+    .b-open { background:rgba(93,214,142,0.12); color:var(--green); border:1px solid rgba(93,214,142,0.22); }
+    .b-closed { background:rgba(212,122,122,0.1); color:var(--red); border:1px solid rgba(212,122,122,0.18); }
+    .card-deal { font-size:0.78rem; color:var(--gold-light); margin-bottom:3px; font-weight:500; }
+    .card-address { font-size:0.72rem; color:var(--muted); }
+    .card-meta { display:flex; align-items:center; gap:10px; margin-top:5px; flex-wrap:wrap; }
+    .card-dist { font-size:0.7rem; color:var(--pink); font-weight:500; }
+    .card-hours { font-size:0.7rem; color:var(--muted); }
+    .card-source { font-size:0.65rem; color:rgba(138,131,150,0.6); margin-top:3px; }
+    .card-source a { color:rgba(212,168,67,0.5); text-decoration:none; }
+
+    /* LEAFLET */
+    .leaflet-popup-content-wrapper { background:var(--surface2)!important; color:var(--text)!important; border:1px solid var(--border)!important; border-radius:10px!important; box-shadow:0 4px 20px rgba(0,0,0,0.5)!important; font-family:'DM Sans',sans-serif!important; }
+    .leaflet-popup-tip { background:var(--surface2)!important; }
+    .leaflet-popup-close-button { color:var(--muted)!important; }
+    .popup-name { font-weight:600; font-size:0.88rem; margin-bottom:3px; }
+    .popup-deal { color:var(--gold); font-size:0.76rem; }
+    .popup-hours { color:var(--muted); font-size:0.7rem; margin-top:2px; }
+    .leaflet-control-zoom a { background:var(--surface2)!important; color:var(--gold)!important; border-color:var(--border)!important; }
+    .leaflet-control-attribution { display:none; }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>Lincoln <span>2-for-1</span> 🍹</h1>
+  <div id="btn-row">
+    <button class="hbtn" id="locate-btn">📍 Me</button>
+    <button class="hbtn" id="search-btn">🔍 Find Deals</button>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<div id="status-bar">
+  <span id="status-text">Tap "Find Deals" to search for live offers</span>
+  <span id="count-badge"></span>
+</div>
+
+<div id="panel">
+  <div id="loading">
+    <div class="shimmer" style="height:80px"></div>
+    <div class="shimmer" style="height:80px"></div>
+    <div class="shimmer" style="height:80px"></div>
+  </div>
+  <div id="empty">
+    <div class="big">🍸</div>
+    <p>Tap <strong>Find Deals</strong> and the app will search the web for live 2-for-1 cocktail offers in Lincoln right now.</p>
+    <p style="margin-top:10px;font-size:0.7rem;color:rgba(138,131,150,0.5)">Results update every time you search.</p>
+  </div>
+  <div id="cards"></div>
+</div>
+
+<script>
+const LINCOLN = [53.2307, -0.5406];
+let userLatLng = null;
+let markers = [];
+let activeIndex = null;
+let lastResults = [];
+
+// ── MAP ──────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView(LINCOLN, 15);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+
+// ── HELPERS ──────────────────────────────────
+function distKm(a, b) {
+  const R = 6371, dLat = (b[0]-a[0])*Math.PI/180, dLng = (b[1]-a[1])*Math.PI/180;
+  const x = Math.sin(dLat/2)**2 + Math.cos(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+}
+function fmtDist(km) { return km < 1 ? `${Math.round(km*1000)}m away` : `${km.toFixed(1)}km away`; }
+function isOpen(s, e) { const h = new Date().getHours(); return h >= s && h < e; }
+
+function makeIcon(active) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:30px;height:30px;background:${active?'#f0c96a':'#d4a843'};border:2px solid ${active?'#fff':'#0e0d0f'};border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center"><span style="transform:rotate(45deg);font-size:13px">🍹</span></div>`,
+    iconSize: [30,30], iconAnchor: [15,30], popupAnchor: [0,-32]
+  });
+}
+
+function setActive(i) {
+  if (activeIndex !== null) {
+    if (markers[activeIndex]) markers[activeIndex].setIcon(makeIcon(false));
+    document.querySelectorAll('.card')[activeIndex]?.classList.remove('active');
+  }
+  activeIndex = i;
+  if (markers[i]) markers[i].setIcon(makeIcon(true));
+  document.querySelectorAll('.card')[i]?.classList.add('active');
+  map.panTo([lastResults[i].lat, lastResults[i].lng], { animate: true });
+}
+
+// ── RENDER RESULTS ────────────────────────────
+function renderVenues(venues) {
+  // Clear old markers
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+  activeIndex = null;
+  document.getElementById('cards').innerHTML = '';
+  document.getElementById('empty').style.display = 'none';
+  lastResults = venues;
+
+  const badge = document.getElementById('count-badge');
+  badge.textContent = `${venues.length} found`;
+  badge.style.display = venues.length > 0 ? 'block' : 'none';
+
+  if (venues.length === 0) {
+    document.getElementById('empty').style.display = 'block';
+    document.getElementById('empty').querySelector('p').textContent = 'No deals found right now. Try again later or on a different day — deals change frequently.';
+    return;
+  }
+
+  const bounds = [];
+  venues.forEach((v, i) => {
+    bounds.push([v.lat, v.lng]);
+    const open = isOpen(v.dealStart || 12, v.dealEnd || 23);
+    const dist = userLatLng ? fmtDist(distKm(userLatLng, [v.lat, v.lng])) : null;
+
+    // Marker
+    const marker = L.marker([v.lat, v.lng], { icon: makeIcon(false) })
+      .addTo(map)
+      .bindPopup(`<div class="popup-name">${v.name}</div><div class="popup-deal">🍹 ${v.deal}</div><div class="popup-hours">🕐 ${v.dealHours || 'Check venue'}</div>`);
+    marker.on('click', () => {
+      setActive(i);
+      document.querySelectorAll('.card')[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    markers.push(marker);
+
+    // Card
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-top">
+        <div class="card-name">${v.name}</div>
+        <div class="badges">
+          <span class="badge b-deal">2-for-1</span>
+          ${open ? '<span class="badge b-open">● On now</span>' : '<span class="badge b-closed">Off now</span>'}
+        </div>
+      </div>
+      <div class="card-deal">🍹 ${v.deal}</div>
+      <div class="card-address">📍 ${v.address}</div>
+      <div class="card-meta">
+        <span class="card-hours">🕐 ${v.dealHours || 'Check venue'}</span>
+        ${dist ? `<span class="card-dist">📍 ${dist}</span>` : ''}
+      </div>
+      ${v.source ? `<div class="card-source">Source: <a href="${v.source}" target="_blank" rel="noopener">${new URL(v.source).hostname}</a></div>` : ''}
+    `;
+    card.addEventListener('click', () => { setActive(i); markers[i]?.openPopup(); });
+    document.getElementById('cards').appendChild(card);
+  });
+
+  // Fit map to results
+  if (bounds.length > 0) {
+    if (userLatLng) bounds.push(userLatLng);
+    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+  }
+}
+
+// ── SEARCH ────────────────────────────────────
+async function searchDeals() {
+  const btn = document.getElementById('search-btn');
+  const status = document.getElementById('status-text');
+  btn.disabled = true;
+  btn.textContent = '⏳ Searching…';
+  status.className = 'searching';
+  status.textContent = 'Searching the web for live deals…';
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('empty').style.display = 'none';
+  document.getElementById('cards').innerHTML = '';
+  document.getElementById('count-badge').style.display = 'none';
+
+  try {
+    const res = await fetch('/.netlify/functions/find-deals');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+    renderVenues(data.venues || []);
+
+    status.className = 'done';
+    status.textContent = data.venues?.length > 0
+      ? `Found ${data.venues.length} venues with deals`
+      : 'No deals found — try again later';
+  } catch (err) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('empty').style.display = 'block';
+    document.getElementById('empty').querySelector('p').textContent = 'Search failed. Check your connection and try again.';
+    status.className = 'error';
+    status.textContent = 'Search failed — tap to retry';
+    console.error(err);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔍 Find Deals';
+}
+
+// ── LOCATE ────────────────────────────────────
+let userMarker = null;
+function locateUser() {
+  if (!navigator.geolocation) return;
+  const btn = document.getElementById('locate-btn');
+  btn.textContent = '⏳';
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLatLng = [pos.coords.latitude, pos.coords.longitude];
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.circleMarker(userLatLng, {
+      radius:8, color:'#e05c7a', fillColor:'#e05c7a', fillOpacity:0.9, weight:2
+    }).addTo(map).bindPopup('<div style="font-weight:600;color:#f0ece4">You</div>');
+    map.setView(userLatLng, 15);
+    btn.textContent = '📍 Me';
+    // Update distances on any existing cards
+    if (lastResults.length > 0) {
+      lastResults.forEach((v, i) => {
+        const el = document.querySelectorAll('.card-dist')[i];
+        if (el) el.textContent = '📍 ' + fmtDist(distKm(userLatLng, [v.lat, v.lng]));
+      });
+    }
+  }, () => { btn.textContent = '📍 Me'; });
+}
+
+document.getElementById('search-btn').addEventListener('click', searchDeals);
+document.getElementById('locate-btn').addEventListener('click', locateUser);
+
+// Auto-locate on load
+if (navigator.geolocation) setTimeout(locateUser, 500);
+</script>
+</body>
+</html>

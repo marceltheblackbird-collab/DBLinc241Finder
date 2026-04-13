@@ -1,0 +1,121 @@
+# Lincoln Cocktails Finder — Setup Guide
+# 20 minutes, free, no coding needed
+# ════════════════════════════════════
+
+## WHAT YOU NEED TO DO (overview)
+1. Get a free Anthropic API key (2 mins)
+2. Create a free GitHub account and upload the files (5 mins)
+3. Create a free Netlify account and connect it (5 mins)
+4. Add your API key to Netlify (2 mins)
+5. Share the link on WhatsApp (1 min)
+
+---
+
+## STEP 1 — Get a free Anthropic API key
+
+1. Go to: https://console.anthropic.com
+2. Click "Sign up" → create an account with your email
+3. Once logged in, click "API Keys" in the left menu
+4. Click "Create Key" → give it any name (e.g. "Lincoln App")
+5. COPY the key (starts with sk-ant-...) — paste it into Notepad for now
+   ⚠️ You only see it once. Don't close the tab until you've saved it.
+
+Free tier note: Anthropic gives you free credits to start.
+This app uses roughly £0.01–0.02 per search, so the free credits
+will cover hundreds of searches.
+
+---
+
+## STEP 2 — Upload the files to GitHub
+
+GitHub is just a free place to store code files. You won't write any code.
+
+1. Go to: https://github.com and click "Sign up" (free)
+2. Once logged in, click the "+" icon (top right) → "New repository"
+3. Name it: lincoln-cocktails
+4. Make sure "Public" is selected
+5. Click "Create repository"
+6. On the next screen, click "uploading an existing file"
+7. Drag ALL THREE files into the window:
+      index.html
+      netlify.toml
+      netlify/functions/find-deals.js
+   (For the functions file: create the folder path by typing
+    "netlify/functions/find-deals.js" as the filename when prompted)
+8. Click "Commit changes"
+
+---
+
+## STEP 3 — Connect Netlify to your GitHub
+
+Netlify is the free hosting service. It reads from GitHub automatically.
+
+1. Go to: https://app.netlify.com and click "Sign up with GitHub"
+2. Click "Add new site" → "Import an existing project"
+3. Click "GitHub" → find "lincoln-cocktails" → click it
+4. Leave all settings as they are → click "Deploy site"
+5. Wait ~60 seconds. Netlify will give you a URL like:
+   https://fuzzy-lemon-a1b2c3.netlify.app
+   You can rename this later to something nicer.
+
+---
+
+## STEP 4 — Add your Anthropic API key to Netlify
+
+This is the one slightly fiddly step but takes 60 seconds.
+
+1. In Netlify, go to your site → click "Site configuration"
+2. In the left menu: "Environment variables"
+3. Click "Add a variable"
+4. Key:   ANTHROPIC_API_KEY
+   Value: paste your sk-ant-... key here
+5. Click "Save"
+6. Go back to "Deploys" and click "Trigger deploy" → "Deploy site"
+7. Wait ~30 seconds
+
+---
+
+## STEP 5 — Share on WhatsApp
+
+Copy your Netlify URL (e.g. https://fuzzy-lemon-a1b2c3.netlify.app)
+and send it in the group. That's it.
+
+When anyone opens the link and taps "Find Deals", the app
+searches the web live and plots current 2-for-1 offers on the map.
+
+---
+
+## RENAMING YOUR URL (optional but nice)
+
+In Netlify → Site configuration → Site information → Change site name
+You can set it to something like: lincoln-cocktails.netlify.app
+
+---
+
+## UPDATING THE APP LATER
+
+If you want to change anything (e.g. the city, the search query):
+1. Edit the file on GitHub (click the file → pencil icon)
+2. Netlify automatically redeploys within 60 seconds
+3. Everyone's link updates automatically — no action needed
+
+---
+
+## TROUBLESHOOTING
+
+App shows "Search failed":
+→ Check your ANTHROPIC_API_KEY is set correctly in Netlify (no spaces)
+→ Trigger a new deploy after adding/changing the key
+
+No results found:
+→ This is real — it means the AI didn't find evidence of current deals
+→ Try at different times (evenings/weekends more likely to find deals)
+→ Deals change — this is expected behaviour
+
+Map doesn't show my location:
+→ Allow location permission when the browser asks
+→ Some Android browsers need "precise location" permission enabled
+
+---
+
+Questions? Ask Claude at claude.ai — paste this whole guide if needed.

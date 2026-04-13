@@ -10,6 +10,7 @@ exports.handler = async function (event, context) {
   }
 
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+
   if (!ANTHROPIC_KEY) {
     return {
       statusCode: 500,
@@ -22,143 +23,72 @@ exports.handler = async function (event, context) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  async function callAnthropicWithRetry(body, maxAttempts = 3) {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30000);
-
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": "interleaved-thinking-2025-05-14"
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal
-        });
-
-        clearTimeout(timeout);
-
-        const data = await res.json();
-
-        if (res.ok) {
-          return { ok: true, data, attempt };
-        }
-
-        lastError = { status: res.status, data, attempt };
-
-        const errorType = data?.error?.type || "";
-        const retryable =
-          errorType === "overloaded_error" ||
-          res.status === 429 ||
-          res.status >= 500;
-
-        if (!retryable || attempt === maxAttempts) {
-          return { ok: false, error: lastError };
-        }
-
-        await sleep(1500 * attempt);
-      } catch (err) {
-        lastError = { message: err.message, attempt };
-
-        if (attempt === maxAttempts) {
-          return { ok: false, error: lastError };
-        }
-
-        await sleep(1500 * attempt);
-      }
-    }
-
-    return { ok: false, error: lastError };
-  }
-
   try {
-    const prompt = `Search the web for venues in Lincoln, UK that may offer cocktail deals, happy hour offers, 2-for-1 cocktails, discounted cocktails, student drinks deals, weekday drinks promotions, or similar offers.
+    const prompt = `Find cocktail deals in Lincoln, UK available today or tonight.
 
-Look across:
-- bars
-- pubs
-- cocktail bars
-- restaurants
-- lounges
-- clubs
+Look for:
+- 2 for 1 cocktails
+- 2-4-1 cocktails
+- happy hour cocktails
+- discounted cocktails
 
-Search using terms like:
-- "cocktail deals Lincoln"
-- "happy hour Lincoln"
-- "2 for 1 cocktails Lincoln"
-- "drinks deals Lincoln"
-- "student nights Lincoln cocktails"
-- "Brayford Lincoln bars offers"
-- "Lincoln bar happy hour"
+Use venue websites, DesignMyNight, Instagram, Facebook, and local listings.
 
-Include venues in:
-- Lincoln city centre
-- Brayford Waterfront
-- uphill Lincoln if relevant
-- nearby central Lincoln areas
-
-Respond with ONLY a valid JSON array, no explanation, no markdown.
-
-Format:
+Return ONLY a JSON array:
 [
   {
     "name": "Venue Name",
-    "address": "Full address if available",
+    "address": "Address if available",
     "deal": "Short deal description",
-    "dealHours": "Deal hours if known",
-    "dealStart": 17,
-    "dealEnd": 20,
-    "source": "https://url-where-you-found-it.com"
+    "dealHours": "Hours if known, otherwise Check venue",
+    "dealStart": 12,
+    "dealEnd": 23,
+    "source": "https://..."
   }
 ]
 
 Rules:
-- Prefer real evidence from venue websites, booking platforms, Facebook pages, Instagram bios or posts, event listings, student listings, or local directories.
-- If a venue appears to promote cocktails or happy hour but exact times are unclear, include it anyway and use:
-  "dealHours": "Check venue"
-  "dealStart": 12
-  "dealEnd": 23
-- If a source looks recent but not fully precise, include the venue rather than excluding it.
-- Exclude clearly irrelevant or duplicate results.
-- Aim for 5 to 15 results.
-- Do not invent venues.
-- Quality matters, but do not be overly strict.`;
+- Lincoln city centre, Brayford Waterfront, and nearby central Lincoln only
+- include 3 to 8 results if found
+- if hours are unclear use "Check venue", 12, and 23
+- do not invent venues`;
 
-    const anthropicBody = {
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
-    };
+    const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "interleaved-thinking-2025-05-14"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 600,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      })
+    });
 
-    const aiCall = await callAnthropicWithRetry(anthropicBody, 3);
+    const aiData = await aiRes.json();
 
-    if (!aiCall.ok) {
+    if (!aiRes.ok) {
       return {
-        statusCode: 502,
+        statusCode: aiRes.status || 500,
         headers,
         body: JSON.stringify({
           error: "Anthropic API call failed",
-          detail: aiCall.error,
-          suggestion: "Retry in a moment. Anthropic appears overloaded."
+          detail: aiData
         })
       };
     }
 
-    const aiData = aiCall.data;
-
     let rawText = "";
+
     for (const block of aiData.content || []) {
       if (block.type === "text" && block.text) {
         rawText += block.text;
@@ -166,7 +96,6 @@ Rules:
     }
 
     let venues = [];
-    let parseError = null;
 
     try {
       const match = rawText.match(/\[[\s\S]*\]/);
@@ -174,10 +103,19 @@ Rules:
         venues = JSON.parse(match[0]);
       }
     } catch (e) {
-      parseError = e.message;
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({
+          error: "Could not parse AI response",
+          rawText
+        })
+      };
     }
 
-    if (!Array.isArray(venues)) venues = [];
+    if (!Array.isArray(venues)) {
+      venues = [];
+    }
 
     const geocoded = [];
 
@@ -195,14 +133,13 @@ Rules:
           `${name}, ${address}, Lincoln, UK`,
           `${name}, Lincoln, UK`,
           `${address}, Lincoln, UK`
-        ].filter(Boolean);
+        ].filter(q => q && q.trim());
 
         let found = null;
 
         for (const attempt of attempts) {
-          const query = encodeURIComponent(attempt);
           const geoRes = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`,
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(attempt)}&format=json&limit=1`,
             {
               headers: {
                 "User-Agent": "LincolnCocktailFinder/1.0"
@@ -217,7 +154,7 @@ Rules:
             break;
           }
 
-          await sleep(250);
+          await sleep(200);
         }
 
         if (found) {
@@ -233,10 +170,11 @@ Rules:
             lng: parseFloat(found.lon)
           });
         }
-
-        await sleep(250);
       } catch (e) {
+        // Skip failed venue
       }
+
+      await sleep(200);
     }
 
     return {
@@ -244,14 +182,7 @@ Rules:
       headers,
       body: JSON.stringify({
         venues: geocoded,
-        count: geocoded.length,
-        debug: {
-          anthropicAttempt: aiCall.attempt,
-          rawText,
-          parseError,
-          aiReturnedCount: venues.length,
-          geocodedCount: geocoded.length
-        }
+        count: geocoded.length
       })
     };
   } catch (err) {

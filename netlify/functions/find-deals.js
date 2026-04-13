@@ -18,6 +18,65 @@ exports.handler = async function (event, context) {
     };
   }
 
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function callAnthropicWithRetry(body, maxAttempts = 3) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "interleaved-thinking-2025-05-14"
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        const data = await res.json();
+
+        if (res.ok) {
+          return { ok: true, data, attempt };
+        }
+
+        lastError = { status: res.status, data, attempt };
+
+        const errorType = data?.error?.type || "";
+        const retryable =
+          errorType === "overloaded_error" ||
+          res.status === 429 ||
+          res.status >= 500;
+
+        if (!retryable || attempt === maxAttempts) {
+          return { ok: false, error: lastError };
+        }
+
+        await sleep(1500 * attempt);
+      } catch (err) {
+        lastError = { message: err.message, attempt };
+
+        if (attempt === maxAttempts) {
+          return { ok: false, error: lastError };
+        }
+
+        await sleep(1500 * attempt);
+      }
+    }
+
+    return { ok: false, error: lastError };
+  }
+
   try {
     const prompt = `Search the web for venues in Lincoln, UK that may offer cocktail deals, happy hour offers, 2-for-1 cocktails, discounted cocktails, student drinks deals, weekday drinks promotions, or similar offers.
 
@@ -71,39 +130,33 @@ Rules:
 - Do not invent venues.
 - Quality matters, but do not be overly strict.`;
 
-    const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "interleaved-thinking-2025-05-14"
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages: [
-          {
-            role: "user",
-            content: prompt
-          }
-        ]
-      })
-    });
+    const anthropicBody = {
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [
+        {
+          role: "user",
+          content: prompt
+        }
+      ]
+    };
 
-    const aiData = await aiRes.json();
+    const aiCall = await callAnthropicWithRetry(anthropicBody, 3);
 
-    if (!aiRes.ok) {
+    if (!aiCall.ok) {
       return {
-        statusCode: 500,
+        statusCode: 502,
         headers,
         body: JSON.stringify({
           error: "Anthropic API call failed",
-          detail: aiData
+          detail: aiCall.error,
+          suggestion: "Retry in a moment. Anthropic appears overloaded."
         })
       };
     }
+
+    const aiData = aiCall.data;
 
     let rawText = "";
     for (const block of aiData.content || []) {
@@ -164,7 +217,7 @@ Rules:
             break;
           }
 
-          await new Promise(r => setTimeout(r, 250));
+          await sleep(250);
         }
 
         if (found) {
@@ -181,9 +234,8 @@ Rules:
           });
         }
 
-        await new Promise(r => setTimeout(r, 250));
+        await sleep(250);
       } catch (e) {
-        // swallow per venue
       }
     }
 
@@ -194,11 +246,11 @@ Rules:
         venues: geocoded,
         count: geocoded.length,
         debug: {
+          anthropicAttempt: aiCall.attempt,
           rawText,
           parseError,
           aiReturnedCount: venues.length,
-          geocodedCount: geocoded.length,
-          parsedVenues: venues
+          geocodedCount: geocoded.length
         }
       })
     };

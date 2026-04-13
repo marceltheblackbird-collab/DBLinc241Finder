@@ -11,11 +11,66 @@ exports.handler = async function (event, context) {
 
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_KEY) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: "API key not configured" }) };
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: "API key not configured" })
+    };
   }
 
   try {
-    // ── Step 1: Ask Claude (with live web search) to find current deals ──
+    const prompt = `Search the web for venues in Lincoln, UK that may offer cocktail deals, happy hour offers, 2-for-1 cocktails, discounted cocktails, student drinks deals, weekday drinks promotions, or similar offers.
+
+Look across:
+- bars
+- pubs
+- cocktail bars
+- restaurants
+- lounges
+- clubs
+
+Search using terms like:
+- "cocktail deals Lincoln"
+- "happy hour Lincoln"
+- "2 for 1 cocktails Lincoln"
+- "drinks deals Lincoln"
+- "student nights Lincoln cocktails"
+- "Brayford Lincoln bars offers"
+- "Lincoln bar happy hour"
+
+Include venues in:
+- Lincoln city centre
+- Brayford Waterfront
+- uphill Lincoln if relevant
+- nearby central Lincoln areas
+
+Respond with ONLY a valid JSON array, no explanation, no markdown.
+
+Format:
+[
+  {
+    "name": "Venue Name",
+    "address": "Full address if available",
+    "deal": "Short deal description",
+    "dealHours": "Deal hours if known",
+    "dealStart": 17,
+    "dealEnd": 20,
+    "source": "https://url-where-you-found-it.com"
+  }
+]
+
+Rules:
+- Prefer real evidence from venue websites, booking platforms, Facebook pages, Instagram bios or posts, event listings, student listings, or local directories.
+- If a venue appears to promote cocktails or happy hour but exact times are unclear, include it anyway and use:
+  "dealHours": "Check venue"
+  "dealStart": 12
+  "dealEnd": 23
+- If a source looks recent but not fully precise, include the venue rather than excluding it.
+- Exclude clearly irrelevant or duplicate results.
+- Aim for 5 to 15 results.
+- Do not invent venues.
+- Quality matters, but do not be overly strict.`;
+
     const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -28,103 +83,144 @@ exports.handler = async function (event, context) {
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
         tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages: [{
-          role: "user",
-          content: `Search the web now for bars, pubs, and cocktail venues in Lincoln, UK (Lincoln city centre and Brayford waterfront area) that currently advertise 2-for-1 cocktails, happy hour cocktail deals, or cocktail promotions.
-
-Search for things like "2 for 1 cocktails Lincoln", "happy hour cocktails Lincoln", "cocktail deals Lincoln bars".
-
-Then respond with ONLY a valid JSON array — no explanation, no markdown, just raw JSON like:
-[
-  {
-    "name": "Venue Name",
-    "address": "Full address, Lincoln",
-    "deal": "Short deal description",
-    "dealHours": "e.g. 5pm–8pm weekdays",
-    "dealStart": 17,
-    "dealEnd": 20,
-    "source": "https://url-where-you-found-it.com"
-  }
-]
-
-Rules:
-- Only include venues with actual evidence of a current deal. Do not invent or guess.
-- If you find no evidence for a venue having a deal, leave it out.
-- Aim for 3–10 real results. Quality over quantity.
-- dealStart and dealEnd are 24-hour integers (e.g. 17 and 20 for 5pm–8pm).
-- If the deal runs all day or hours are unclear, use 12 and 23.`
-        }]
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
       })
     });
 
     const aiData = await aiRes.json();
 
-    // Extract text from response (may be after tool use blocks)
-    let rawText = "";
-    for (const block of (aiData.content || [])) {
-      if (block.type === "text") rawText += block.text;
+    if (!aiRes.ok) {
+      console.error("Anthropic API error:", aiData);
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({
+          error: "Anthropic API call failed",
+          detail: aiData
+        })
+      };
     }
 
-    // Parse the JSON array out of the response
+    let rawText = "";
+    for (const block of aiData.content || []) {
+      if (block.type === "text" && block.text) {
+        rawText += block.text;
+      }
+    }
+
+    console.log("Raw AI text:", rawText);
+
     let venues = [];
     try {
       const match = rawText.match(/\[[\s\S]*\]/);
-      if (match) venues = JSON.parse(match[0]);
+      if (match) {
+        venues = JSON.parse(match[0]);
+      }
     } catch (e) {
       console.error("JSON parse error:", e, "Raw:", rawText);
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({
+          error: "Could not parse AI response as JSON",
+          rawText
+        })
+      };
     }
 
-    // ── Step 2: Geocode each venue address → lat/lng via Nominatim ──
+    if (!Array.isArray(venues)) {
+      venues = [];
+    }
+
     const geocoded = [];
+
     for (const v of venues) {
       try {
-        const query = encodeURIComponent(`${v.name}, ${v.address}, Lincoln, UK`);
-        const geoRes = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`,
-          { headers: { "User-Agent": "LincolnCocktailFinder/1.0" } }
-        );
-        const geoData = await geoRes.json();
-        if (geoData.length > 0) {
+        const name = v.name || "Unknown venue";
+        const address = v.address || "";
+        const deal = v.deal || "Cocktail deal";
+        const dealHours = v.dealHours || "Check venue";
+        const dealStart = Number.isInteger(v.dealStart) ? v.dealStart : 12;
+        const dealEnd = Number.isInteger(v.dealEnd) ? v.dealEnd : 23;
+        const source = v.source || "";
+
+        const attempts = [
+          `${name}, ${address}, Lincoln, UK`,
+          `${name}, Lincoln, UK`,
+          `${address}, Lincoln, UK`
+        ].filter(Boolean);
+
+        let found = null;
+
+        for (const attempt of attempts) {
+          const query = encodeURIComponent(attempt);
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`,
+            {
+              headers: {
+                "User-Agent": "LincolnCocktailFinder/1.0"
+              }
+            }
+          );
+
+          const geoData = await geoRes.json();
+
+          if (Array.isArray(geoData) && geoData.length > 0) {
+            found = geoData[0];
+            break;
+          }
+
+          await new Promise(r => setTimeout(r, 250));
+        }
+
+        if (found) {
           geocoded.push({
-            ...v,
-            lat: parseFloat(geoData[0].lat),
-            lng: parseFloat(geoData[0].lon)
+            name,
+            address,
+            deal,
+            dealHours,
+            dealStart,
+            dealEnd,
+            source,
+            lat: parseFloat(found.lat),
+            lng: parseFloat(found.lon)
           });
         } else {
-          // Try just the name + Lincoln if full address fails
-          const fallback = encodeURIComponent(`${v.name}, Lincoln, UK`);
-          const fallRes = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${fallback}&format=json&limit=1`,
-            { headers: { "User-Agent": "LincolnCocktailFinder/1.0" } }
-          );
-          const fallData = await fallRes.json();
-          if (fallData.length > 0) {
-            geocoded.push({
-              ...v,
-              lat: parseFloat(fallData[0].lat),
-              lng: parseFloat(fallData[0].lon)
-            });
-          }
+          console.warn("Could not geocode:", name, address);
         }
-        // Small delay to be polite to Nominatim's free service
-        await new Promise(r => setTimeout(r, 200));
+
+        await new Promise(r => setTimeout(r, 250));
       } catch (e) {
-        console.error("Geocode error for", v.name, e);
+        console.error("Geocode error for venue:", v, e);
       }
     }
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ venues: geocoded, count: geocoded.length })
+      body: JSON.stringify({
+        venues: geocoded,
+        count: geocoded.length,
+        debug: {
+          aiReturnedCount: venues.length,
+          geocodedCount: geocoded.length
+        }
+      })
     };
-
   } catch (err) {
     console.error("Function error:", err);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: "Search failed", detail: err.message })
+      body: JSON.stringify({
+        error: "Search failed",
+        detail: err.message
+      })
     };
   }
 };

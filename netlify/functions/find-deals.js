@@ -95,7 +95,6 @@ Rules:
     const aiData = await aiRes.json();
 
     if (!aiRes.ok) {
-      console.error("Anthropic API error:", aiData);
       return {
         statusCode: 500,
         headers,
@@ -113,29 +112,19 @@ Rules:
       }
     }
 
-    console.log("Raw AI text:", rawText);
-
     let venues = [];
+    let parseError = null;
+
     try {
       const match = rawText.match(/\[[\s\S]*\]/);
       if (match) {
         venues = JSON.parse(match[0]);
       }
     } catch (e) {
-      console.error("JSON parse error:", e, "Raw:", rawText);
-      return {
-        statusCode: 500,
-        headers,
-        body: JSON.stringify({
-          error: "Could not parse AI response as JSON",
-          rawText
-        })
-      };
+      parseError = e.message;
     }
 
-    if (!Array.isArray(venues)) {
-      venues = [];
-    }
+    if (!Array.isArray(venues)) venues = [];
 
     const geocoded = [];
 
@@ -190,13 +179,11 @@ Rules:
             lat: parseFloat(found.lat),
             lng: parseFloat(found.lon)
           });
-        } else {
-          console.warn("Could not geocode:", name, address);
         }
 
         await new Promise(r => setTimeout(r, 250));
       } catch (e) {
-        console.error("Geocode error for venue:", v, e);
+        // swallow per venue
       }
     }
 
@@ -207,13 +194,15 @@ Rules:
         venues: geocoded,
         count: geocoded.length,
         debug: {
+          rawText,
+          parseError,
           aiReturnedCount: venues.length,
-          geocodedCount: geocoded.length
+          geocodedCount: geocoded.length,
+          parsedVenues: venues
         }
       })
     };
   } catch (err) {
-    console.error("Function error:", err);
     return {
       statusCode: 500,
       headers,
